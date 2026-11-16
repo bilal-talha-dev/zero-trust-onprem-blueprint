@@ -1,0 +1,37 @@
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:2024.11.1
+    container_name: zero-trust-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:?TUNNEL_TOKEN must be set}
+    networks:
+      - tunnel-egress
+      - app-internal
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    depends_on:
+      - web-app
+
+  web-app:
+    image: nginxinc/nginx-unprivileged:1.27-alpine
+    container_name: zero-trust-web-app
+    restart: unless-stopped
+    networks:
+      - app-internal
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+
+networks:
+  tunnel-egress:
+    driver: bridge
+  app-internal:
+    driver: bridge
+    internal: true
