@@ -1,0 +1,59 @@
+name: Zero-Port On-Premise GitOps Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "k8s/**"
+      - "scripts/verify-zero-ports.sh"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to On-Premise K3s via Cloudflare Tunnel
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install cloudflared CLI
+        run: |
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+          sudo dpkg -i cloudflared.deb
+
+      - name: Configure SSH over Cloudflare Access Tunnel
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.ONPREM_SSH_KEY }}
+          SSH_HOST: ${{ secrets.CF_SSH_HOSTNAME }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${SSH_PRIVATE_KEY}" > ~/.ssh/onprem_ed25519
+          chmod 600 ~/.ssh/onprem_ed25519
+          cat <<EOF > ~/.ssh/config
+          Host ${SSH_HOST}
+            User ${{ secrets.ONPREM_SSH_USER }}
+            IdentityFile ~/.ssh/onprem_ed25519
+            StrictHostKeyChecking accept-new
+            ProxyCommand cloudflared access ssh --hostname %h --id ${CF_ACCESS_CLIENT_ID} --secret ${CF_ACCESS_CLIENT_SECRET}
+          EOF
+
+      - name: Sync manifests and apply to K3s
+        env:
+          SSH_HOST: ${{ secrets.CF_SSH_HOSTNAME }}
+        run: |
+          scp -r k8s scripts/verify-zero-ports.sh "${SSH_HOST}:/tmp/zero-trust-deploy/"
+          ssh "${SSH_HOST}" bash -s <<'REMOTE'
+            set -euo pipefail
+            kubectl apply -f /tmp/zero-trust-deploy/k8s/namespace.yaml
+            kubectl apply -f /tmp/zero-trust-deploy/k8s/network-policy.yaml
+            kubectl apply -f /tmp/zero-trust-deploy/k8s/cloudflared-deployment.yaml
+            kubectl apply -f /tmp/zero-trust-deploy/k8s/app-deployment.yaml
+            kubectl -n onprem-apps rollout status deployment/cloudflared --timeout=120s
+            kubectl -n onprem-apps rollout status deployment/web-workload --timeout=120s
+            bash /tmp/zero-trust-deploy/verify-zero-ports.sh
+            rm -rf /tmp/zero-trust-deploy
+          REMOTE
