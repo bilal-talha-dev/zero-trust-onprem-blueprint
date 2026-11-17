@@ -1,0 +1,17 @@
+name: Daily Pulse
+
+on:
+  schedule:
+    - cron: '15 10 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  trigger-pulse:
+    uses: bilal-talha-dev/bilal-talha-dev/.github/workflows/auto-pulse.yml@main
+    with:
+      probability: 45
